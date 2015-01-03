@@ -1,0 +1,483 @@
+#! /usr/bin/perl
+
+use strict;
+use warnings;
+use List::Util qw(min max);
+use lib '/use_your_directory_here';
+
+require Ecobee;
+
+# Run in automatic, unattended mode or interact with user (default)
+our $set_auto = 0;
+our $data_directory = '/use_your_directory_here';
+
+# Get ID of the Smart thermostat to interact with
+sub Get_Thermostat_Id {
+  my ($p_thermostat_name) = @_;
+
+  my %results;
+  my $cmd = 'thermostatSummary';
+  my %prop = (selection => {
+               selectionType => 'registered',
+               selectionMatch => ''
+              }
+             );
+
+  Ecobee::API_Get_Request($cmd, \%prop, \%results);
+
+  my @revisionList = @{$results{revisionList}};
+  my $revisionQty = @revisionList;
+
+  my $use_default = ((!defined($p_thermostat_name)) and ($revisionQty == 1));
+  my $revision;
+  foreach $revision (@revisionList) {
+    my @revisionParms = split(':', $revision);
+    return ($revisionParms[0]) if (($use_default) or ($p_thermostat_name eq $revisionParms[1]));
+  }
+
+# Thermostat not found!
+  return (0);
+}
+
+# Get Thermostat Revision to detect if changes applied
+sub Get_Thermostat_Revision {
+  my ($p_thermostat_id, $p_scalar_ref) = @_;
+
+  my %results;
+  my $cmd = 'thermostatSummary';
+  my %prop = (selection => {
+               selectionType => 'thermostats',
+               selectionMatch => $p_thermostat_id
+              }
+             );
+
+  Ecobee::API_Get_Request($cmd, \%prop, \%results);
+
+  my @revisionList = @{$results{revisionList}};
+  my $revisionString  = $revisionList[0];
+  my @revisionParms = split(':', $revisionString);
+
+  $$p_scalar_ref = $revisionParms[3];
+  return ($revisionParms[2] eq "true");
+}
+
+# Request from ecobee servers, thermostat, environmental, sensor and runtime data
+sub Get_Thermostat_Data {
+  my ($p_thermostat_id, $p_hash_ref) = @_;
+
+  my $request_date;
+  my $request_interval;
+
+# Request thermostat data
+  {
+    my %results;
+    my $cmd = 'thermostat';
+    my %prop = (selection => {
+                 selectionType => 'thermostats',
+                 selectionMatch => $p_thermostat_id,
+                 includeSettings => 'true',
+                 includeRuntime => 'true',
+                 includeWeather => 'true'
+               }
+              );
+
+    Ecobee::API_Get_Request($cmd, \%prop, \%results);
+
+    my $thermostat_ref = \@{$results{thermostatList}};
+    my $settings_ref   = \%{$$thermostat_ref[0]{settings}};
+    my $runtime_ref    = \%{$$thermostat_ref[0]{runtime}};
+    my $weather_ref    = \%{$$thermostat_ref[0]{weather}};
+    my $forecasts_ref  = \@{$$weather_ref{forecasts}};
+    my $forecast_ref   = \%{$$forecasts_ref[0]};
+
+    $request_date = $$runtime_ref{runtimeDate};
+    $request_interval = $$runtime_ref{runtimeInterval};
+
+#   Settings
+    $$p_hash_ref{'hvacMode'}              = $$settings_ref{hvacMode};
+    $$p_hash_ref{'hasHeatPump'}           = $$settings_ref{hasHeatPump};
+    $$p_hash_ref{'hasHrv'}                = $$settings_ref{hasHrv};
+    $$p_hash_ref{'hasDehumidifier'}       = $$settings_ref{hasDehumidifier};
+    $$p_hash_ref{'dehumidifierMode'}      = $$settings_ref{dehumidifierMode};
+    $$p_hash_ref{'dehumidifierLevel'}     = $$settings_ref{dehumidifierLevel};
+    $$p_hash_ref{'dehumidifyWhenHeating'} = $$settings_ref{dehumidifyWhenHeating};
+    $$p_hash_ref{'dehumidifierMinRuntimeDelta'} = 2; # not accessible from API
+    $$p_hash_ref{'fanMinOnTime'}          = $$settings_ref{fanMinOnTime};
+
+#   Runtime
+    $$p_hash_ref{'connected'}         = $$runtime_ref{connected};
+    $$p_hash_ref{'actualTemperature'} = F10toC($$runtime_ref{actualTemperature});
+    $$p_hash_ref{'actualHumidity'}    = $$runtime_ref{actualHumidity};
+
+#   Forecast
+    $$p_hash_ref{'exteriorTemperature'}      = F10toC($$forecast_ref{temperature});
+    $$p_hash_ref{'exteriorRelativeHumidity'} = $$forecast_ref{relativeHumidity};
+  }
+
+# Request sensor data
+  {
+    my %results;
+    my $cmd = 'runtimeReport';
+    my %prop = (selection => {
+                 selectionType => 'thermostats',
+                 selectionMatch => $p_thermostat_id,
+                 includeRuntimeSensorReport => 'true'
+                },
+                startDate => $request_date,
+                endDate => $request_date,
+                startInterval => max(0, $request_interval - 2),
+                endInterval => $request_interval,
+                includeSensors => 'true'
+               );
+
+    Ecobee::API_Get_Request($cmd, \%prop, \%results);
+
+    my $sensorList_ref = \@{$results{sensorList}};
+    my $sensors_ref = \@{$$sensorList_ref[0]{sensors}};
+    my $columns_ref = \@{$$sensorList_ref[0]{columns}};
+    my $data_ref = \@{$$sensorList_ref[0]{data}};
+
+    my $sensor_ref;
+    my %data;
+    my $sensor_name;
+    foreach $sensor_ref (@$sensors_ref) {
+      my %sensor = %$sensor_ref;
+      undef $sensor_name;
+      if (($sensor{sensorType} eq 'temperature') and ($sensor{sensorUsage} eq 'indoor')) {
+        $sensor_name = 'sensorIndoor';
+      }
+      elsif (($sensor{sensorType} eq 'temperature') and ($sensor{sensorUsage} eq 'outdoor')) {
+        $sensor_name = 'sensorOutdoor';
+      }
+
+      if (defined($sensor_name)) {
+        my $i;
+        my $nb_columns = @$columns_ref;
+        for ($i = 0; $i < $nb_columns; $i++) {
+          if ($sensor{sensorId} eq $$columns_ref[$i]) {
+            my @dataParms = split(',', $$data_ref[2]);
+            $$p_hash_ref{$sensor_name} = FtoC($dataParms[$i]);
+          }
+        }
+      }
+    }
+  }
+
+# Request from ecobee servers, runtime data
+  {
+#   Currently: get dehumidifier run time percentage in last 30 minutes.
+    my %results;
+    my $cmd = 'runtimeReport';
+    my %prop = (selection => {
+                 selectionType => 'thermostats',
+                 selectionMatch => $p_thermostat_id,
+                },
+                startDate => $request_date,
+                endDate => $request_date,
+                startInterval => max(0, $request_interval - 6),
+                endInterval => $request_interval,
+                columns => 'dehumidifier'
+               );
+
+    Ecobee::API_Get_Request($cmd, \%prop, \%results);
+  
+    my $reportList_ref = \@{$results{reportList}};
+    my $rowCount = $$reportList_ref[0]{rowCount};
+    if ($rowCount > 0) {
+      my $rowList_ref = \@{$$reportList_ref[0]{rowList}};
+  
+      my $total = 0;
+      my $runstr = '';
+      my $i;
+      for ($i = 0; $i < $rowCount; $i++) {
+          my @row = split(',', $$rowList_ref[$i]);
+          $total += $row[2];
+          $runstr = $runstr . ($row[2] == 0 ? '.' : ($row[2] == 300 ? 'O' : 'o'));
+      }
+
+      $$p_hash_ref{'dehumidifierPercentRuntime'} = 100*($total / ($rowCount * 300));
+      $$p_hash_ref{'dehumidifierRunGraph'} = $runstr;
+    }
+  }
+}
+
+# Send to ecobee servers, changes to thermostat programming (if any)
+sub Set_Thermostat_Data {
+  my ($p_thermostat_id, $p_hum_level, $p_fan_level, $p_data_ref) = @_;
+
+  my %results;
+  my $cmd = 'thermostat';
+  my %settings;
+
+  my $log = sprintf("Request dehum %.1f%%, fan %s", $p_hum_level, ($p_fan_level > 0 ? 'ON' : 'OFF'));
+  Log_Data($log);
+
+  my $dehum_mode;
+  my $dehum_level;
+
+  if ($p_hum_level == 0) {
+#   Dehumidifier OFF
+    $dehum_mode = 'off';
+    $dehum_level = 0;
+
+    if ($$p_data_ref{'dehumidifierMode'} ne $dehum_mode) {
+#     Going from ON to OFF, just specify mode
+      $settings{'dehumidifierMode'} = $dehum_mode;
+    }
+  }
+  else {
+#   Dehumidifier ON
+    $dehum_mode = 'on';
+    $dehum_level = To_Thermostat_Humidity($p_hum_level);
+
+    if ($$p_data_ref{'dehumidifierMode'} ne $dehum_mode) {
+#     Going from OFF to ON, specify both mode and level
+      $settings{'dehumidifierMode'} = $dehum_mode;
+      $settings{'dehumidifierLevel'} = $dehum_level;
+    }
+    else {
+#     Going to a different dehumidification level, specify just level
+#     Only adjust if raw requested level is at least 1.5% different to prevent oscillation effect
+      if (abs($p_hum_level - $$p_data_ref{'dehumidifierLevel'}) >= 1.5) {
+        $settings{'dehumidifierLevel'} = $dehum_level;
+      }
+    }
+  }
+
+# Control furnace fan
+  if ($$p_data_ref{'fanMinOnTime'} ne $p_fan_level) {
+    $settings{'fanMinOnTime'} = $p_fan_level;
+  }
+
+  if (keys(%settings) > 0) {
+    my %prop = (selection => {
+                 selectionType => 'thermostats',
+                 selectionMatch => $p_thermostat_id
+                },
+                thermostat => {
+                  settings => \%settings
+                }
+               );
+
+    Log_Data("Set dehumidifier [$dehum_mode, $dehum_level%], fan [$p_fan_level]");
+
+    my $old_revision;
+    if (!Get_Thermostat_Revision($p_thermostat_id, \$old_revision)) {
+      Log_Data("Not connected");
+      return (0);
+    }
+
+    Ecobee::API_Post_Request($cmd, \%prop, \%results);
+
+#   Wait for thermostat revision change. Time out after a minute
+    my $new_revision;
+    my $i;
+    for ($i = 0; $i < 60; $i++) {
+      sleep(1);
+
+      if (!Get_Thermostat_Revision($p_thermostat_id, \$new_revision)) {
+        Log_Data("Disconnected while waiting for revision change");
+        return (0);
+      }
+
+      if ($old_revision ne $new_revision) {
+        Log_Data("Updated");
+        return (1);
+      }
+    }
+    Log_Data("Update timed out");
+    return (0);
+  }
+  else {
+    Log_Data("No update needed");
+    return (1);
+  }
+}
+
+# Convert Farenheit 1/10 of degrees to Celsius degrees
+sub F10toC {
+  my ($p_f10) = @_;
+  return (($p_f10 - 320) / 18.0);
+}
+
+# Convert Celsius degrees to Farenheit 1/10 of degrees
+sub CtoF10 {
+  my ($p_c) = @_;
+  return (($p_c * 18.0) + 320);
+}
+
+# Convert Farenheit degrees to Celsius degrees
+sub FtoC {
+  my ($p_f) = @_;
+  return (($p_f - 32) / 1.8);
+}
+
+# Convert Celsius degrees to Farenheit degrees
+sub CtoF {
+  my ($p_c) = @_;
+  return (($p_c * 1.8) + 32);
+}
+
+# Round to next integer
+sub round {
+  my ($p_float) = @_;
+  return (int($p_float + $p_float/abs($p_float*2)));
+}
+
+# Round to precision
+sub RoundToPrecision {
+  my ($p_float, $p_precision) = @_;
+  return ($p_precision*round($p_float/$p_precision));
+}
+
+# Convert raw humidity value to nearest even number between 30 and 80
+sub To_Thermostat_Humidity {
+  my ($p_humidity) = @_;
+  my $hum = RoundToPrecision($p_humidity, 2);
+  return (max(min($hum, 80), 30));
+}
+
+# Convert humidity rh1 at temperature t1 to humidity rh2 at temperature t2
+sub Calculate_Humidity {
+  my ($p_t1, $p_rh1, $p_t2) = @_;
+
+  $p_t1 += 273;
+  $p_t2 += 273;
+			
+  my $p0 = 7.5152E8;
+  my $deltaH = 42809;
+  my $R = 8.314;
+			
+  my $sat_p1 = $p0 * exp(-$deltaH/($R*$p_t1));
+  my $sat_p2 = $p0 * exp(-$deltaH/($R*$p_t2));
+  my $vapor = $sat_p1 * $p_rh1/100;
+  my $rh2 = ($vapor/$sat_p2)*100;
+# my $dew = -$deltaH/($R*log($vapor/$p0)) - 273;
+
+  return ($rh2);
+}
+
+# Figure out ideal indoor humidity based on outdoor temperature
+sub Ideal_Indoor_Humidity {
+  my ($p_outside_temp) = @_;
+# at -30C => 30%, at 0C => 45%
+  my $hum = 45 + (0.5 * $p_outside_temp);
+# Limit range to 30% .. 60%
+  return (max(min($hum, 60), 30));
+}
+
+# Log messages to screen or log file in auto mode
+sub Log_Data {
+  my ($p_data) = @_;
+
+# In auto mode, write to log file, otherwise to standard out
+  if ($set_auto) {
+    open(FILE, ">>$data_directory/ecobee_mgr.log") or return;
+    my $local_time = time() - (5*3600);
+    my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = gmtime($local_time);
+    my $tstamp = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $mon, $mday, $hour, $min, $sec);
+    print(FILE "$tstamp $p_data\n");
+    close(FILE);
+  }
+  else {
+    print("$p_data\n");
+  }
+}
+
+# Main routine
+sub main {
+  my ($p_parm) = @_;
+  my %data;
+  my $log;
+  my $mode;
+  my $dehum_level;
+  my $fan_level;
+
+  $set_auto = (defined $p_parm ? ($p_parm eq "-auto") : 0);
+  Ecobee::Init($data_directory, $set_auto);
+  Log_Data("=========ecobee_mgr.pl Start=========");
+
+# Get thermostat ID for thermostat name (if only 1 thermostat, name not required)
+  my $thermostat_id = Get_Thermostat_Id() || die "Thermostat not defined";
+
+# Get operational and environmental information from ecobee server
+  Get_Thermostat_Data($thermostat_id, \%data);
+
+# First determine if we can and should be attempting to control humidity with HRV
+  if (($data{connected} eq "true") and ($data{hvacMode} eq "heat") and
+      ($data{hasHrv} eq "true") and ($data{hasDehumidifier} eq "true")  and
+      ($data{dehumidifyWhenHeating} eq "true")) {
+
+#   Use actual outdoor sensor if available, otherwise from weather forecast
+    my $outdoor_temp = (defined($data{sensorOutdoor}) ?
+                        $data{sensorOutdoor} :
+                        $data{exteriorTemperature});
+
+#   Calculate indoor temperature from average of internal and indoor sensor if available
+    my $indoor_temp = (defined($data{sensorIndoor}) ?
+                       ($data{sensorIndoor} + $data{actualTemperature})/2 :
+                       $data{actualTemperature});
+
+#   Calculate what is the exterior humidity at indoor temperature: after HRV
+    my $out_hum_in = Calculate_Humidity($data{exteriorTemperature},
+                                        $data{exteriorRelativeHumidity},
+                                        $indoor_temp);
+
+#   Calculate what is the actual ideal humidity at current outdoor temperature
+    my $ideal_hum_at_21 = Ideal_Indoor_Humidity($outdoor_temp);
+    my $ideal_hum = $ideal_hum_at_21; #Calculate_Humidity(21, $ideal_hum_at_21, $indoor_temp);
+
+    $log = sprintf("Out: [%d%% @ %.1fC] = [%d%% @ %.1fC] In: %d%% => %.1f%% (%.1fC)",
+                   $data{exteriorRelativeHumidity}, $data{exteriorTemperature},
+                   $out_hum_in, $indoor_temp, $data{actualHumidity}, $ideal_hum, $outdoor_temp);
+    Log_Data($log);
+
+    if (defined($data{dehumidifierPercentRuntime})) {
+      $log = sprintf("Dehumidifier [%s, %d%%] run %d%% [%s]",
+                     $data{dehumidifierMode}, $data{dehumidifierLevel},
+                     $data{dehumidifierPercentRuntime}, $data{dehumidifierRunGraph});
+    }
+    else {
+      $log = sprintf("Dehumidifier [%s, %d%%]", $data{dehumidifierMode}, $data{dehumidifierLevel});
+    }
+    Log_Data($log);
+
+#   Calculate if we can lower current humidity with outside air
+#   Outside air has to be drier by at least 2% to avoid long HRV run times
+
+#   Outside air has higher humidity than current, turn off HRV dehumidifier
+    my $humidity_delta = $data{dehumidifierMinRuntimeDelta} + 2;
+    if ($out_hum_in >= $data{actualHumidity} - $humidity_delta) {
+      $dehum_level = 0;
+    }
+#   Outside air has higher humidity than ideal but still lower than current
+    elsif ($out_hum_in >= $ideal_hum - $humidity_delta) {
+      $dehum_level = $out_hum_in + $humidity_delta;
+    }
+#   Outside is dry enough that we can request ideal humidity level
+    else {
+      $dehum_level = $ideal_hum;
+    }
+
+#   Start furnace fan when indoor sensors are too different
+    my $temp_diff = abs($data{sensorIndoor} - $data{actualTemperature});
+    if ($temp_diff >= 1) {
+      $fan_level = 60;
+    }
+    else {
+      $fan_level = 0;
+    }
+    $log = sprintf("Temp diff up/down %.1fC => fan %d min/hour", 
+                   $temp_diff, $fan_level);
+    Log_Data($log);
+
+    Set_Thermostat_Data($thermostat_id, $dehum_level, $fan_level, \%data);
+  }
+  else {
+    Log_Data("HRV cannot be used as dehumidifier:");
+    Log_Data("Connected:$data{connected} hvacMode:$data{hvacMode} hasHrv:$data{hasHrv} hasDehumidifier:$data{hasDehumidifier} dehumidifyWhenHeating:$data{dehumidifyWhenHeating}");
+  }
+  Log_Data("----------ecobee_mgr.pl End----------");
+}
+
+main(@ARGV);
