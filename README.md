@@ -22,8 +22,8 @@ If you want to run this script in an automated fashion, you can call it with an 
 
 I think that if you're not already familiar with the ecobee API, now would be a good time to start :-) https://www.ecobee.com/home/developer/api/documentation/v1/index.shtml
 
-Although I am giving this away and will not profit in any way, I feel obligated to also send you this link https://www.ecobee.com/home/developer/api/documentation/v1/licensing-agreement.shtml
-as I don't want to get in trouble with ecobee and have my API access privileges revoked because I should have mentioned this to you but didn't...
+I think that anyone using this module and script should go read https://www.ecobee.com/home/developer/api/documentation/v1/licensing-agreement.shtml
+as I think it is important to be aware of ecobee requirements for use of their API.
 
-That out of the way, I hope you enjoy this perl script and module and let me know if you have any questions or comments.
+I hope you enjoy this perl script and module and let me know if you have any questions or comments.
 
