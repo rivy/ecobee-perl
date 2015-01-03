@@ -4,8 +4,9 @@ ecobee-perl
 perl module and script to control ecobee thermostat for dehumidifier and furnace fan
 
 Current implementation includes module Ecobee.pm that takes care of all low-level access with ecobee API version 1.
+A perl script ecobee_mgr.pl takes care of controlling a heat recovery ventilator wired as a dehumidifier. Obviously this only makes sense in winter when the outside air is cold and dry enough to dehumidify inside the house. New functionality has recently been added to control the furnace fan to equalize the temperature between the first floor (internal thermostat temperature sensor) and a remote sensor located on the second floor. This has only been used and tested with an ecobee Smart thermostat with a wired remote sensor.
 
-First thing you need to do is get a developer tab in your ecobee web portal. Then you can create an app in the developer tab to get an API key. Then you need to create an ascii text file where you are going to be running the ecobee_mgr.pl script called api_key.txt. This file needs to contain only your API key (no spaces in front or after, no ending CrLf).
+In order to get things under way, the first thing you need to do is get a developer tab in your ecobee web portal. Then you can create an app in the developer tab to get an API key. Then you need to create an ascii text file where you are going to be running the ecobee_mgr.pl script called api_key.txt. This file needs to contain only your API key (no spaces in front or after, no ending CrLf).
 
 Next, in ecobee_mgr.pl, you need to go modify the "use lib '/your_path_here' " to the proper path where to find the Ecobee.pm module if it's not in a standard perl library directory.
 
