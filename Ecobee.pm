@@ -8,8 +8,8 @@ use Storable;
 
 package Ecobee;
 
-our $debug_trace = 0;
-our $debug_io = 0;
+use constant DEBUG_TRACE => 0;
+use constant DEBUG_IO => 0;
 
 our $api_link = 'https://api.ecobee.com';
 our $api_ver = '1';
@@ -19,9 +19,10 @@ our $token_file = 'token.dat';
 
 our $api_key;
 our $auto_mode = 0;
+our $api_calls = 0;
 
 sub Init {
-  print("Init\n") if ($debug_trace);
+  print("Init\n") if (DEBUG_TRACE);
   my ($p_data_directory, $p_auto_mode) = @_;
 
 # Set auto negotiation mode (or fail)
@@ -42,7 +43,7 @@ sub Init {
 }
 
 sub Read_Authorize_Response {
-  print("Read_Authorize_Response\n") if ($debug_trace);
+  print("Read_Authorize_Response\n") if (DEBUG_TRACE);
   my ($p_hash_ref) = @_;
   my $retcode = 0;
 
@@ -61,14 +62,14 @@ sub Read_Authorize_Response {
 }
 
 sub Write_Authorize_Response {
-  print("Write_Authorize_Response\n") if ($debug_trace);
+  print("Write_Authorize_Response\n") if (DEBUG_TRACE);
   my ($p_hash_ref) = @_;
 
   Storable::store($p_hash_ref, $authorize_file) || die "Cannot write authorize file";
 }
 
 sub Read_Token_Response {
-  print("Read_Token_Response\n") if ($debug_trace);
+  print("Read_Token_Response\n") if (DEBUG_TRACE);
   my ($p_hash_ref) = @_;
   my $retcode = 0;
 
@@ -87,7 +88,7 @@ sub Read_Token_Response {
 }
 
 sub Write_Token_Response {
-  print("Write_Token_Response\n") if ($debug_trace);
+  print("Write_Token_Response\n") if (DEBUG_TRACE);
   my ($p_hash_ref) = @_;
   
   Storable::store($p_hash_ref, $token_file) || die "Cannot write token file";
@@ -104,7 +105,7 @@ sub Write_Token_Response {
 # Return: http return code (200 = success)
 #
 sub Get_Request {
-  print("Get_Request\n") if ($debug_trace);
+  print("Get_Request\n") if (DEBUG_TRACE);
   my ($p_hdr_ref, $p_api, $p_cmd, $p_json_ref, $p_hash_ref) = @_;
 
   my $response_body;
@@ -118,17 +119,20 @@ sub Get_Request {
     my $json = JSON::encode_json($p_json_ref);
     $url = $url.$json;
   }
-  print("URL: $url\n") if ($debug_io);
+  print("URL: $url\n") if (DEBUG_IO);
 
   $curl->setopt(WWW::Curl::Easy::CURLOPT_URL, $url);
   $curl->setopt(WWW::Curl::Easy::CURLOPT_WRITEDATA, \$response_body);
   $curl->setopt(WWW::Curl::Easy::CURLOPT_ERRORBUFFER, "error_buffer");
-# $curl->setopt(WWW::Curl::Easy::CURLOPT_VERBOSE, 1);
+  $curl->setopt(WWW::Curl::Easy::CURLOPT_SSL_VERIFYPEER, 1);
+  $curl->setopt(WWW::Curl::Easy::CURLOPT_VERBOSE, DEBUG_IO);
 
   if ($curl->perform != 0) {
     die "Curl failed: $error_buffer";
   }
-  print("Response body: $response_body\n") if ($debug_io);
+  $api_calls++;
+
+  print("Response body: $response_body\n") if (DEBUG_IO);
 
   my $response_code = $curl->getinfo(WWW::Curl::Easy::CURLINFO_HTTP_CODE);
   my $json_ref = JSON::decode_json($response_body);
@@ -148,7 +152,7 @@ sub Get_Request {
 # Return: http return code (200 = success)
 #
 sub Post_Request {
-  print("Post_Request\n") if ($debug_trace);
+  print("Post_Request\n") if (DEBUG_TRACE);
   my ($p_hdr_ref, $p_api, $p_cmd, $p_json_ref, $p_hash_ref) = @_;
 
   my $response_body;
@@ -167,20 +171,23 @@ sub Post_Request {
     $url = $p_api;
     $post = $p_cmd;
   }
-  print("URL: $url\n") if ($debug_io);
-  print("POST: $post\n") if ($debug_io);
+  print("URL: $url\n") if (DEBUG_IO);
+  print("POST: $post\n") if (DEBUG_IO);
 
   $curl->setopt(WWW::Curl::Easy::CURLOPT_URL, $url);
   $curl->setopt(WWW::Curl::Easy::CURLOPT_POST, 1);
   $curl->setopt(WWW::Curl::Easy::CURLOPT_POSTFIELDS, $post);
   $curl->setopt(WWW::Curl::Easy::CURLOPT_WRITEDATA, \$response_body);
   $curl->setopt(WWW::Curl::Easy::CURLOPT_ERRORBUFFER, "error_buffer");
-# $curl->setopt(WWW::Curl::Easy::CURLOPT_VERBOSE, 1);  
+  $curl->setopt(WWW::Curl::Easy::CURLOPT_SSL_VERIFYPEER, 1);
+  $curl->setopt(WWW::Curl::Easy::CURLOPT_VERBOSE, DEBUG_IO);  
 
   if ($curl->perform != 0) {
     die "Curl failed: $error_buffer";
   }
-  print("Response body: $response_body\n") if ($debug_io);
+  $api_calls++;
+
+  print("Response body: $response_body\n") if (DEBUG_IO);
 
   my $response_code = $curl->getinfo(WWW::Curl::Easy::CURLINFO_HTTP_CODE);
 
@@ -191,7 +198,7 @@ sub Post_Request {
 } 
  
 sub Authorize_Request {
-  print("Authorize_Request\n") if ($debug_trace);
+  print("Authorize_Request\n") if (DEBUG_TRACE);
   my ($p_hash_ref) = @_;
 
   my $endpoint = "$api_link/authorize";
@@ -202,7 +209,7 @@ sub Authorize_Request {
 }
 
 sub Token_Request {
-  print("Token_Request\n") if ($debug_trace);
+  print("Token_Request\n") if (DEBUG_TRACE);
   my ($p_code, $p_hash_ref) = @_;
 
   my $endpoint = "$api_link/token";
@@ -213,7 +220,7 @@ sub Token_Request {
 }
 
 sub Refresh_Token_Request {
-  print("Refresh_Token_Request\n") if ($debug_trace);
+  print("Refresh_Token_Request\n") if (DEBUG_TRACE);
   my ($p_refresh, $p_hash_ref) = @_;
 
   my $endpoint = "$api_link/token";
@@ -224,7 +231,7 @@ sub Refresh_Token_Request {
 }
 
 sub Get_Authorization {
-  print("Get_Authorization\n") if ($debug_trace);
+  print("Get_Authorization\n") if (DEBUG_TRACE);
   my ($p_token_type_ref, $p_access_token_ref) = @_;
 
   my $retcode;
@@ -264,7 +271,7 @@ sub Get_Authorization {
 }
 
 sub Get_Token_Refresh {
-  print("Get_Token_refresh\n") if ($debug_trace);
+  print("Get_Token_refresh\n") if (DEBUG_TRACE);
   my ($p_token_type_ref, $p_access_token_ref) = @_;
 
   my $retcode;
@@ -290,7 +297,7 @@ sub Get_Token_Refresh {
 }
 
 sub API_Get_Request {
-  print("API_Get_Request\n") if ($debug_trace);
+  print("API_Get_Request\n") if (DEBUG_TRACE);
   my ($p_cmd, $p_json_ref, $p_hash_ref) = @_;
 
   my $token_type;
@@ -320,7 +327,7 @@ sub API_Get_Request {
 }
 
 sub API_Post_Request {
-  print("API_Post_Request\n") if ($debug_trace);
+  print("API_Post_Request\n") if (DEBUG_TRACE);
   my ($p_cmd, $p_json_ref, $p_hash_ref) = @_;
 
   my $token_type;
@@ -347,6 +354,11 @@ sub API_Post_Request {
       die "Get Request failed: $status{message}";
     }
   } while ($retcode != 0);
+}
+
+sub API_Calls
+{
+  return ($api_calls);
 }
 
 1;

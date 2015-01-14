@@ -3,13 +3,13 @@
 use strict;
 use warnings;
 use List::Util qw(min max);
-use lib '/use_your_directory_here';
+use lib '/your_path_here';
 
 require Ecobee;
 
 # Run in automatic, unattended mode or interact with user (default)
 our $set_auto = 0;
-our $data_directory = '/use_your_directory_here';
+our $data_directory = '/your_path_here';
 
 # Get ID of the Smart thermostat to interact with
 sub Get_Thermostat_Id {
@@ -165,7 +165,7 @@ sub Get_Thermostat_Data {
 
 # Request from ecobee servers, runtime data
   {
-#   Currently: get dehumidifier run time percentage in last 30 minutes.
+#   Currently: get dehumidifier run time percentage in last 60 minutes.
     my %results;
     my $cmd = 'runtimeReport';
     my %prop = (selection => {
@@ -174,7 +174,7 @@ sub Get_Thermostat_Data {
                 },
                 startDate => $request_date,
                 endDate => $request_date,
-                startInterval => max(0, $request_interval - 6),
+                startInterval => max(0, $request_interval - 12),
                 endInterval => $request_interval,
                 columns => 'dehumidifier'
                );
@@ -195,7 +195,7 @@ sub Get_Thermostat_Data {
           $runstr = $runstr . ($row[2] == 0 ? '.' : ($row[2] == 300 ? 'O' : 'o'));
       }
 
-      $$p_hash_ref{'dehumidifierPercentRuntime'} = 100*($total / ($rowCount * 300));
+      $$p_hash_ref{'dehumidifierPercentRuntime'} = 100*($total/($rowCount*300));
       $$p_hash_ref{'dehumidifierRunGraph'} = $runstr;
     }
   }
@@ -238,14 +238,15 @@ sub Set_Thermostat_Data {
     else {
 #     Going to a different dehumidification level, specify just level
 #     Only adjust if raw requested level is at least 1.5% different to prevent oscillation effect
-      if (abs($p_hum_level - $$p_data_ref{'dehumidifierLevel'}) >= 1.5) {
+      if (($$p_data_ref{'dehumidifierLevel'} != $dehum_level) and
+          (abs($p_hum_level - $$p_data_ref{'dehumidifierLevel'}) >= 1.5)) {
         $settings{'dehumidifierLevel'} = $dehum_level;
       }
     }
   }
 
 # Control furnace fan
-  if ($$p_data_ref{'fanMinOnTime'} ne $p_fan_level) {
+  if ($$p_data_ref{'fanMinOnTime'} != $p_fan_level) {
     $settings{'fanMinOnTime'} = $p_fan_level;
   }
 
@@ -360,10 +361,10 @@ sub Calculate_Humidity {
 # Figure out ideal indoor humidity based on outdoor temperature
 sub Ideal_Indoor_Humidity {
   my ($p_outside_temp) = @_;
-# at -30C => 30%, at 0C => 45%
-  my $hum = 45 + (0.5 * $p_outside_temp);
+# at -20C => 30%, at 0C => 45%
+  my $hum = 45 + (0.75 * $p_outside_temp);
 # Limit range to 30% .. 60%
-  return (max(min($hum, 60), 30));
+  return (max(min($hum, 60), 15));
 }
 
 # Log messages to screen or log file in auto mode
@@ -375,7 +376,7 @@ sub Log_Data {
     open(FILE, ">>$data_directory/ecobee_mgr.log") or return;
     my $local_time = time() - (5*3600);
     my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = gmtime($local_time);
-    my $tstamp = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $mon, $mday, $hour, $min, $sec);
+    my $tstamp = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $mon+1, $mday, $hour, $min, $sec);
     print(FILE "$tstamp $p_data\n");
     close(FILE);
   }
@@ -460,7 +461,8 @@ sub main {
     }
 
 #   Start furnace fan when indoor sensors are too different
-    my $temp_diff = abs($data{sensorIndoor} - $data{actualTemperature});
+    my $temp_diff = (defined($data{sensorIndoor}) ?
+                     abs($data{sensorIndoor} - $data{actualTemperature}) : 0);
     if ($temp_diff >= 1) {
       $fan_level = 60;
     }
@@ -477,6 +479,8 @@ sub main {
     Log_Data("HRV cannot be used as dehumidifier:");
     Log_Data("Connected:$data{connected} hvacMode:$data{hvacMode} hasHrv:$data{hasHrv} hasDehumidifier:$data{hasDehumidifier} dehumidifyWhenHeating:$data{dehumidifyWhenHeating}");
   }
+  $log = sprintf("Number of API calls: %d", Ecobee::API_Calls());
+  Log_Data($log);
   Log_Data("----------ecobee_mgr.pl End----------");
 }
 
