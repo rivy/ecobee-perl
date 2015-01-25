@@ -3,13 +3,13 @@
 use strict;
 use warnings;
 use List::Util qw(min max);
-use lib '/your_path_here';
+use lib '/home/daniel/ecobee';
 
 require Ecobee;
 
 # Run in automatic, unattended mode or interact with user (default)
 our $set_auto = 0;
-our $data_directory = '/your_path_here';
+our $data_directory = '/home/daniel/ecobee';
 
 # Get ID of the Smart thermostat to interact with
 sub Get_Thermostat_Id {
@@ -35,7 +35,7 @@ sub Get_Thermostat_Id {
     return ($revisionParms[0]) if (($use_default) or ($p_thermostat_name eq $revisionParms[1]));
   }
 
-# Thermostat not found!
+  # Thermostat not found!
   return (0);
 }
 
@@ -68,7 +68,7 @@ sub Get_Thermostat_Data {
   my $request_date;
   my $request_interval;
 
-# Request thermostat data
+  # Request thermostat data
   {
     my %results;
     my $cmd = 'thermostat';
@@ -93,7 +93,7 @@ sub Get_Thermostat_Data {
     $request_date = $$runtime_ref{runtimeDate};
     $request_interval = $$runtime_ref{runtimeInterval};
 
-#   Settings
+    # Settings
     $$p_hash_ref{'hvacMode'}              = $$settings_ref{hvacMode};
     $$p_hash_ref{'hasHeatPump'}           = $$settings_ref{hasHeatPump};
     $$p_hash_ref{'hasHrv'}                = $$settings_ref{hasHrv};
@@ -104,17 +104,17 @@ sub Get_Thermostat_Data {
     $$p_hash_ref{'dehumidifierMinRuntimeDelta'} = 2; # not accessible from API
     $$p_hash_ref{'fanMinOnTime'}          = $$settings_ref{fanMinOnTime};
 
-#   Runtime
+    # Runtime
     $$p_hash_ref{'connected'}         = $$runtime_ref{connected};
     $$p_hash_ref{'actualTemperature'} = F10toC($$runtime_ref{actualTemperature});
     $$p_hash_ref{'actualHumidity'}    = $$runtime_ref{actualHumidity};
 
-#   Forecast
+    # Forecast
     $$p_hash_ref{'exteriorTemperature'}      = F10toC($$forecast_ref{temperature});
     $$p_hash_ref{'exteriorRelativeHumidity'} = $$forecast_ref{relativeHumidity};
   }
 
-# Request sensor data
+  # Request sensor data
   {
     my %results;
     my $cmd = 'runtimeReport';
@@ -163,9 +163,9 @@ sub Get_Thermostat_Data {
     }
   }
 
-# Request from ecobee servers, runtime data
+  # Request from ecobee servers, runtime data
   {
-#   Currently: get dehumidifier run time percentage in last 60 minutes.
+    # Currently: get dehumidifier run time percentage in last 60 minutes.
     my %results;
     my $cmd = 'runtimeReport';
     my %prop = (selection => {
@@ -215,29 +215,32 @@ sub Set_Thermostat_Data {
   my $dehum_mode;
   my $dehum_level;
 
-  if ($p_hum_level == 0) {
-#   Dehumidifier OFF
+  if ($p_hum_level == -1) {
+    Log_Data("Do not control dehumidifier");
+  }
+  elsif ($p_hum_level == 0) {
+    # Dehumidifier OFF
     $dehum_mode = 'off';
     $dehum_level = 0;
 
     if ($$p_data_ref{'dehumidifierMode'} ne $dehum_mode) {
-#     Going from ON to OFF, just specify mode
+      # Going from ON to OFF, just specify mode
       $settings{'dehumidifierMode'} = $dehum_mode;
     }
   }
   else {
-#   Dehumidifier ON
+    # Dehumidifier ON
     $dehum_mode = 'on';
     $dehum_level = To_Thermostat_Humidity($p_hum_level);
 
     if ($$p_data_ref{'dehumidifierMode'} ne $dehum_mode) {
-#     Going from OFF to ON, specify both mode and level
+      # Going from OFF to ON, specify both mode and level
       $settings{'dehumidifierMode'} = $dehum_mode;
       $settings{'dehumidifierLevel'} = $dehum_level;
     }
     else {
-#     Going to a different dehumidification level, specify just level
-#     Only adjust if raw requested level is at least 1.5% different to prevent oscillation effect
+      # Going to a different dehumidification level, specify just level
+      # Only adjust if raw requested level is at least 1.5% different to prevent oscillation effect
       if (($$p_data_ref{'dehumidifierLevel'} != $dehum_level) and
           (abs($p_hum_level - $$p_data_ref{'dehumidifierLevel'}) >= 1.5)) {
         $settings{'dehumidifierLevel'} = $dehum_level;
@@ -245,11 +248,15 @@ sub Set_Thermostat_Data {
     }
   }
 
-# Control furnace fan
-  if ($$p_data_ref{'fanMinOnTime'} != $p_fan_level) {
+  # Control furnace fan
+  if ($p_fan_level == -1) {
+    Log_Data("Do not control furnace fan");
+  }
+  elsif ($$p_data_ref{'fanMinOnTime'} != $p_fan_level) {
     $settings{'fanMinOnTime'} = $p_fan_level;
   }
 
+  # Any settings to change on thermostat?
   if (keys(%settings) > 0) {
     my %prop = (selection => {
                  selectionType => 'thermostats',
@@ -270,7 +277,7 @@ sub Set_Thermostat_Data {
 
     Ecobee::API_Post_Request($cmd, \%prop, \%results);
 
-#   Wait for thermostat revision change. Time out after a minute
+    # Wait for thermostat revision change. Time out after a minute
     my $new_revision;
     my $i;
     for ($i = 0; $i < 60; $i++) {
@@ -331,11 +338,11 @@ sub RoundToPrecision {
   return ($p_precision*round($p_float/$p_precision));
 }
 
-# Convert raw humidity value to nearest even number between 30 and 80
+# Convert raw humidity value to nearest even number between 20 and 80
 sub To_Thermostat_Humidity {
   my ($p_humidity) = @_;
   my $hum = RoundToPrecision($p_humidity, 2);
-  return (max(min($hum, 80), 30));
+  return (max(min($hum, 80), 20));
 }
 
 # Convert humidity rh1 at temperature t1 to humidity rh2 at temperature t2
@@ -361,9 +368,11 @@ sub Calculate_Humidity {
 # Figure out ideal indoor humidity based on outdoor temperature
 sub Ideal_Indoor_Humidity {
   my ($p_outside_temp) = @_;
-# at -20C => 30%, at 0C => 45%
+
+  # -40C => 15%, -30C => 22.5%, -20C => 30%, -10C => 37.5%, 0C => 45%, 10C => 52.5%, 20C => 60%
   my $hum = 45 + (0.75 * $p_outside_temp);
-# Limit range to 30% .. 60%
+
+  # Limit range to 15% .. 60%
   return (max(min($hum, 60), 15));
 }
 
@@ -371,7 +380,7 @@ sub Ideal_Indoor_Humidity {
 sub Log_Data {
   my ($p_data) = @_;
 
-# In auto mode, write to log file, otherwise to standard out
+  # In auto mode, write to log file, otherwise to standard out
   if ($set_auto) {
     open(FILE, ">>$data_directory/ecobee_mgr.log") or return;
     my $local_time = time() - (5*3600);
@@ -398,87 +407,101 @@ sub main {
   Ecobee::Init($data_directory, $set_auto);
   Log_Data("=========ecobee_mgr.pl Start=========");
 
-# Get thermostat ID for thermostat name (if only 1 thermostat, name not required)
+  # Get thermostat ID for thermostat name (if only 1 thermostat, name not required)
   my $thermostat_id = Get_Thermostat_Id() || die "Thermostat not defined";
 
-# Get operational and environmental information from ecobee server
+  # Get operational and environmental information from ecobee server
   Get_Thermostat_Data($thermostat_id, \%data);
 
-# First determine if we can and should be attempting to control humidity with HRV
-  if (($data{connected} eq "true") and ($data{hvacMode} eq "heat") and
-      ($data{hasHrv} eq "true") and ($data{hasDehumidifier} eq "true")  and
-      ($data{dehumidifyWhenHeating} eq "true")) {
+  # Avoid making decisions on stale data
+  if ($data{connected} eq "true") {
 
-#   Use actual outdoor sensor if available, otherwise from weather forecast
-    my $outdoor_temp = (defined($data{sensorOutdoor}) ?
-                        $data{sensorOutdoor} :
-                        $data{exteriorTemperature});
+    # HRV dehumidifier section
+    if (($data{hvacMode} eq "heat") and ($data{hasHrv} eq "true") and
+        ($data{hasDehumidifier} eq "true")  and ($data{dehumidifyWhenHeating} eq "true")) {
+      # Use actual outdoor sensor if available, otherwise from weather forecast
+      my $outdoor_temp = (defined($data{sensorOutdoor}) ?
+                          $data{sensorOutdoor} :
+                          $data{exteriorTemperature});
 
-#   Calculate indoor temperature from average of internal and indoor sensor if available
-    my $indoor_temp = (defined($data{sensorIndoor}) ?
-                       ($data{sensorIndoor} + $data{actualTemperature})/2 :
-                       $data{actualTemperature});
+      # Calculate indoor temperature from average of internal and indoor sensor if available
+      my $indoor_temp = (defined($data{sensorIndoor}) ?
+                         ($data{sensorIndoor} + $data{actualTemperature})/2 :
+                         $data{actualTemperature});
 
-#   Calculate what is the exterior humidity at indoor temperature: after HRV
-    my $out_hum_in = Calculate_Humidity($data{exteriorTemperature},
-                                        $data{exteriorRelativeHumidity},
-                                        $indoor_temp);
+      # Calculate what is the exterior humidity at indoor temperature: after HRV
+      my $out_hum_in = Calculate_Humidity($data{exteriorTemperature},
+                                          $data{exteriorRelativeHumidity},
+                                          $indoor_temp);
 
-#   Calculate what is the actual ideal humidity at current outdoor temperature
-    my $ideal_hum_at_21 = Ideal_Indoor_Humidity($outdoor_temp);
-    my $ideal_hum = $ideal_hum_at_21; #Calculate_Humidity(21, $ideal_hum_at_21, $indoor_temp);
+      # Calculate what is the actual ideal humidity at current outdoor temperature
+      my $ideal_hum_at_21 = Ideal_Indoor_Humidity($outdoor_temp);
+      my $ideal_hum = $ideal_hum_at_21; #Calculate_Humidity(21, $ideal_hum_at_21, $indoor_temp);
 
-    $log = sprintf("Out: [%d%% @ %.1fC] = [%d%% @ %.1fC] In: %d%% => %.1f%% (%.1fC)",
-                   $data{exteriorRelativeHumidity}, $data{exteriorTemperature},
-                   $out_hum_in, $indoor_temp, $data{actualHumidity}, $ideal_hum, $outdoor_temp);
-    Log_Data($log);
+      $log = sprintf("Out: [%d%% @ %.1fC] = [%d%% @ %.1fC] In: %d%% => %.1f%% (%.1fC)",
+                     $data{exteriorRelativeHumidity}, $data{exteriorTemperature},
+                     $out_hum_in, $indoor_temp, $data{actualHumidity}, $ideal_hum, $outdoor_temp);
+      Log_Data($log);
 
-    if (defined($data{dehumidifierPercentRuntime})) {
-      $log = sprintf("Dehumidifier [%s, %d%%] run %d%% [%s]",
-                     $data{dehumidifierMode}, $data{dehumidifierLevel},
-                     $data{dehumidifierPercentRuntime}, $data{dehumidifierRunGraph});
+      if (defined($data{dehumidifierPercentRuntime})) {
+        $log = sprintf("Dehumidifier [%s, %d%%] run %d%% [%s]",
+                       $data{dehumidifierMode}, $data{dehumidifierLevel},
+                       $data{dehumidifierPercentRuntime}, $data{dehumidifierRunGraph});
+      }
+      else {
+        $log = sprintf("Dehumidifier [%s, %d%%]", $data{dehumidifierMode}, $data{dehumidifierLevel});
+      }
+      Log_Data($log);
+
+      # Calculate if we can lower current humidity with outside air
+      # Outside air has to be drier by at least 2% to avoid long HRV run times
+
+      # Outside air has higher humidity than current, turn off HRV dehumidifier
+      my $humidity_delta = $data{dehumidifierMinRuntimeDelta} + 2;
+      if ($out_hum_in >= $data{actualHumidity} - $humidity_delta) {
+        $dehum_level = 0;
+      }
+      # Outside air has higher humidity than ideal but still lower than current
+      elsif ($out_hum_in >= $ideal_hum - $humidity_delta) {
+        $dehum_level = $out_hum_in + $humidity_delta;
+      }
+      # Outside is dry enough that we can request ideal humidity level
+      else {
+        $dehum_level = $ideal_hum;
+      }
     }
     else {
-      $log = sprintf("Dehumidifier [%s, %d%%]", $data{dehumidifierMode}, $data{dehumidifierLevel});
-    }
-    Log_Data($log);
-
-#   Calculate if we can lower current humidity with outside air
-#   Outside air has to be drier by at least 2% to avoid long HRV run times
-
-#   Outside air has higher humidity than current, turn off HRV dehumidifier
-    my $humidity_delta = $data{dehumidifierMinRuntimeDelta} + 2;
-    if ($out_hum_in >= $data{actualHumidity} - $humidity_delta) {
-      $dehum_level = 0;
-    }
-#   Outside air has higher humidity than ideal but still lower than current
-    elsif ($out_hum_in >= $ideal_hum - $humidity_delta) {
-      $dehum_level = $out_hum_in + $humidity_delta;
-    }
-#   Outside is dry enough that we can request ideal humidity level
-    else {
-      $dehum_level = $ideal_hum;
+      Log_Data("HRV cannot be used as dehumidifier: hvacMode: $data{hvacMode} hasHrv: $data{hasHrv} hasDehumidifier: $data{hasDehumidifier} dehumidifyWhenHeating: $data{dehumidifyWhenHeating}");
+      $dehum_level = -1;
     }
 
-#   Start furnace fan when indoor sensors are too different
-    my $temp_diff = (defined($data{sensorIndoor}) ?
-                     abs($data{sensorIndoor} - $data{actualTemperature}) : 0);
-    if ($temp_diff >= 1) {
-      $fan_level = 60;
+    # Temp equalizer section
+    if (defined($data{sensorIndoor})) {
+      # Start furnace fan when indoor sensors are too different
+      my $temp_diff = (defined($data{sensorIndoor}) ?
+                       abs($data{sensorIndoor} - $data{actualTemperature}) : 0);
+      if ($temp_diff >= 1) {
+        $fan_level = 60;
+      }
+      else {
+        $fan_level = 0;
+      }
+      $log = sprintf("Temp diff up/down %.1fC => fan %d min/hour", 
+                     $temp_diff, $fan_level);
+      Log_Data($log);
     }
-    else {
-      $fan_level = 0;
+    else
+    {
+      Log_Data("Remote indoor temp sensor does not exist, cannot calculate temp diff");
+      $fan_level = -1;
     }
-    $log = sprintf("Temp diff up/down %.1fC => fan %d min/hour", 
-                   $temp_diff, $fan_level);
-    Log_Data($log);
 
     Set_Thermostat_Data($thermostat_id, $dehum_level, $fan_level, \%data);
   }
   else {
-    Log_Data("HRV cannot be used as dehumidifier:");
-    Log_Data("Connected:$data{connected} hvacMode:$data{hvacMode} hasHrv:$data{hasHrv} hasDehumidifier:$data{hasDehumidifier} dehumidifyWhenHeating:$data{dehumidifyWhenHeating}");
+    Log_Data("Thermostat not connected to server, cannot take decisions based on stale data");
   }
+
   $log = sprintf("Number of API calls: %d", Ecobee::API_Calls());
   Log_Data($log);
   Log_Data("----------ecobee_mgr.pl End----------");
