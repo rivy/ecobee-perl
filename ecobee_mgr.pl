@@ -3,13 +3,13 @@
 use strict;
 use warnings;
 use List::Util qw(min max);
-use lib '/home/daniel/ecobee';
+use lib '/your_path_here';
 
 require Ecobee;
 
 # Run in automatic, unattended mode or interact with user (default)
 our $set_auto = 0;
-our $data_directory = '/home/daniel/ecobee';
+our $data_directory = '/your_path_here';
 
 # Get ID of the Smart thermostat to interact with
 sub Get_Thermostat_Id {
