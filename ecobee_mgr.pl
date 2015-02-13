@@ -3,13 +3,15 @@
 use strict;
 use warnings;
 use List::Util qw(min max);
-use lib '/your_path_here';
+use lib '/home/daniel/ecobee';
+
+use constant TZ => -5;
 
 require Ecobee;
 
 # Run in automatic, unattended mode or interact with user (default)
 our $set_auto = 0;
-our $data_directory = '/your_path_here';
+our $data_directory = '/home/daniel/ecobee';
 
 # Get ID of the Smart thermostat to interact with
 sub Get_Thermostat_Id {
@@ -338,11 +340,20 @@ sub RoundToPrecision {
   return ($p_precision*round($p_float/$p_precision));
 }
 
-# Convert raw humidity value to nearest even number between 20 and 80
+# Convert raw humidity value to nearest even number between 30 and 80
 sub To_Thermostat_Humidity {
   my ($p_humidity) = @_;
   my $hum = RoundToPrecision($p_humidity, 2);
-  return (max(min($hum, 80), 20));
+  return (max(min($hum, 80), 30));
+}
+
+# Attempt to emulate thermostat's RH adjustment based on indoor temperature
+# Thermostat seems to add .5% humidity for each degree drop
+sub Estimate_Ecobee_Humidity {
+  my ($p_rh1, $p_t2) = @_;
+
+  my $rh2 = $p_rh1 + (21 - $p_t2)*0.5;
+  return ($rh2);
 }
 
 # Convert humidity rh1 at temperature t1 to humidity rh2 at temperature t2
@@ -369,11 +380,39 @@ sub Calculate_Humidity {
 sub Ideal_Indoor_Humidity {
   my ($p_outside_temp) = @_;
 
-  # -40C => 15%, -30C => 22.5%, -20C => 30%, -10C => 37.5%, 0C => 45%, 10C => 52.5%, 20C => 60%
-  my $hum = 45 + (0.75 * $p_outside_temp);
+  # 2 or more temp/hum pairs are needed
+  my @temp_hum = ({temp => -20, hum => 30},
+                  {temp => 0, hum => 45},
+                  {temp => 20, hum => 60});
 
-  # Limit range to 15% .. 60%
-  return (max(min($hum, 60), 15));
+  my $arr_size = @temp_hum;
+  my $hum;
+  my $i;
+  my $ratio;
+
+  for ($i = 0; $i < $arr_size; $i++) {
+    # Temperature is below range
+    if (($i == 0) and ($p_outside_temp < $temp_hum[$i]{temp})) {
+      $ratio = ($temp_hum[$i+1]{temp} - $p_outside_temp)/($temp_hum[$i+1]{temp} - $temp_hum[$i]{temp});
+      $hum = $temp_hum[$i+1]{hum} - $ratio*($temp_hum[$i+1]{hum} - $temp_hum[$i]{hum});
+      last;
+    }
+    # Temperature is above range
+    elsif (($i == $arr_size-1) and ($p_outside_temp > $temp_hum[$i]{temp})) {
+      $ratio = ($p_outside_temp - $temp_hum[$i-1]{temp})/($temp_hum[$i]{temp} - $temp_hum[$i-1]{temp});
+      $hum = $temp_hum[$i-1]{hum} + $ratio*($temp_hum[$i]{hum} - $temp_hum[$i-1]{hum});
+      last;
+    }
+    # Temperature is within range
+    elsif (($p_outside_temp >= $temp_hum[$i]{temp}) and ($p_outside_temp <= $temp_hum[$i+1]{temp})) {
+      $ratio = ($p_outside_temp - $temp_hum[$i]{temp})/($temp_hum[$i+1]{temp} - $temp_hum[$i]{temp});
+      $hum = $temp_hum[$i]{hum} + $ratio*($temp_hum[$i+1]{hum} - $temp_hum[$i]{hum});
+      last;
+    }
+  }
+
+  # Limit range to 0% .. 100%
+  return (max(min($hum, 100), 0));
 }
 
 # Log messages to screen or log file in auto mode
@@ -383,7 +422,7 @@ sub Log_Data {
   # In auto mode, write to log file, otherwise to standard out
   if ($set_auto) {
     open(FILE, ">>$data_directory/ecobee_mgr.log") or return;
-    my $local_time = time() - (5*3600);
+    my $local_time = time() + (TZ*3600);
     my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = gmtime($local_time);
     my $tstamp = sprintf("%04d-%02d-%02d %02d:%02d:%02d", $year+1900, $mon+1, $mday, $hour, $min, $sec);
     print(FILE "$tstamp $p_data\n");
@@ -424,10 +463,8 @@ sub main {
                           $data{sensorOutdoor} :
                           $data{exteriorTemperature});
 
-      # Calculate indoor temperature from average of internal and indoor sensor if available
-      my $indoor_temp = (defined($data{sensorIndoor}) ?
-                         ($data{sensorIndoor} + $data{actualTemperature})/2 :
-                         $data{actualTemperature});
+      # Get indoor temperature from average of all temp sensors
+      my $indoor_temp = $data{actualTemperature};
 
       # Calculate what is the exterior humidity at indoor temperature: after HRV
       my $out_hum_in = Calculate_Humidity($data{exteriorTemperature},
@@ -436,7 +473,7 @@ sub main {
 
       # Calculate what is the actual ideal humidity at current outdoor temperature
       my $ideal_hum_at_21 = Ideal_Indoor_Humidity($outdoor_temp);
-      my $ideal_hum = $ideal_hum_at_21; #Calculate_Humidity(21, $ideal_hum_at_21, $indoor_temp);
+      my $ideal_hum = Estimate_Ecobee_Humidity($ideal_hum_at_21, $indoor_temp);
 
       $log = sprintf("Out: [%d%% @ %.1fC] = [%d%% @ %.1fC] In: %d%% => %.1f%% (%.1fC)",
                      $data{exteriorRelativeHumidity}, $data{exteriorTemperature},
@@ -478,16 +515,17 @@ sub main {
     # Temp equalizer section
     if (defined($data{sensorIndoor})) {
       # Start furnace fan when indoor sensors are too different
-      my $temp_diff = (defined($data{sensorIndoor}) ?
-                       abs($data{sensorIndoor} - $data{actualTemperature}) : 0);
+      # actualTemperature is average of both sensors so we can extrapolate
+      # temperature difference by multiplying by 2.
+      my $temp_diff = 2*abs($data{sensorIndoor} - $data{actualTemperature});
       if ($temp_diff >= 1) {
         $fan_level = 60;
       }
       else {
         $fan_level = 0;
       }
-      $log = sprintf("Temp diff up/down %.1fC => fan %d min/hour", 
-                     $temp_diff, $fan_level);
+      $log = sprintf("Temp diff up/avg %.1f/%.1f: %.1fC => fan %d min/hour", 
+                     $data{sensorIndoor}, $data{actualTemperature}, $temp_diff, $fan_level);
       Log_Data($log);
     }
     else
