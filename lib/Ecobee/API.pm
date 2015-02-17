@@ -1,12 +1,12 @@
 #! /usr/bin/perl
 
+package API;
+
 use strict;
 use warnings;
 use WWW::Curl::Easy;
 use JSON;
 use Storable;
-
-package Ecobee;
 
 use constant DEBUG_TRACE => 0;
 use constant DEBUG_IO => 0;
@@ -104,8 +104,8 @@ sub Write_Token_Response {
 #
 # Return: http return code (200 = success)
 #
-sub Get_Request {
-  print("Get_Request\n") if (DEBUG_TRACE);
+sub API_Get_Request {
+  print("API_Get_Request\n") if (DEBUG_TRACE);
   my ($p_hdr_ref, $p_api, $p_cmd, $p_json_ref, $p_hash_ref) = @_;
 
   my $response_body;
@@ -151,8 +151,8 @@ sub Get_Request {
 #
 # Return: http return code (200 = success)
 #
-sub Post_Request {
-  print("Post_Request\n") if (DEBUG_TRACE);
+sub API_Post_Request {
+  print("API_Post_Request\n") if (DEBUG_TRACE);
   my ($p_hdr_ref, $p_api, $p_cmd, $p_json_ref, $p_hash_ref) = @_;
 
   my $response_body;
@@ -203,7 +203,7 @@ sub Authorize_Request {
 
   my $endpoint = "$api_link/authorize";
   my $cmd = "?response_type=ecobeePin&client_id=$api_key&scope=smartWrite";
-  my $retcode = Get_Request("", $endpoint, $cmd, "", $p_hash_ref);
+  my $retcode = API_Get_Request("", $endpoint, $cmd, "", $p_hash_ref);
 
   return $retcode;
 }
@@ -214,7 +214,7 @@ sub Token_Request {
 
   my $endpoint = "$api_link/token";
   my $cmd = "grant_type=ecobeePin&code=$p_code&client_id=$api_key";
-  my $retcode = Post_Request("", $endpoint, $cmd, "", $p_hash_ref);
+  my $retcode = API_Post_Request("", $endpoint, $cmd, "", $p_hash_ref);
 
   return $retcode;
 }
@@ -225,7 +225,7 @@ sub Refresh_Token_Request {
 
   my $endpoint = "$api_link/token";
   my $cmd = "grant_type=refresh_token&code=$p_refresh&client_id=$api_key";
-  my $retcode = Post_Request("", $endpoint, $cmd, "", $p_hash_ref);
+  my $retcode = API_Post_Request("", $endpoint, $cmd, "", $p_hash_ref);
 
   return $retcode;
 }
@@ -296,8 +296,8 @@ sub Get_Token_Refresh {
   return 1;
 }
 
-sub API_Get_Request {
-  print("API_Get_Request\n") if (DEBUG_TRACE);
+sub Get_Request {
+  print("Get_Request\n") if (DEBUG_TRACE);
   my ($p_cmd, $p_json_ref, $p_hash_ref) = @_;
 
   my $token_type;
@@ -310,7 +310,7 @@ sub API_Get_Request {
     my @header = ("Content-Type: application/json;charset=UTF-8",
                   "Authorization: $token_type $access_token");
 
-    $retcode = Get_Request(\@header, $api_link, $cmd, $p_json_ref, $p_hash_ref);
+    $retcode = API_Get_Request(\@header, $api_link, $cmd, $p_json_ref, $p_hash_ref);
     die "HTTP return code not successful: $retcode" if ($retcode != 200 && $retcode != 500);
 
     my %status = %{$$p_hash_ref{status}};
@@ -326,8 +326,8 @@ sub API_Get_Request {
   } while ($retcode != 0);
 }
 
-sub API_Post_Request {
-  print("API_Post_Request\n") if (DEBUG_TRACE);
+sub Post_Request {
+  print("Post_Request\n") if (DEBUG_TRACE);
   my ($p_cmd, $p_json_ref, $p_hash_ref) = @_;
 
   my $token_type;
@@ -340,7 +340,7 @@ sub API_Post_Request {
     my @header = ("Content-Type: application/json;charset=UTF-8",
                   "Authorization: $token_type $access_token");
 
-    $retcode = Post_Request(\@header, $api_link, $cmd, $p_json_ref, $p_hash_ref);
+    $retcode = API_Post_Request(\@header, $api_link, $cmd, $p_json_ref, $p_hash_ref);
     die "HTTP return code not successful: $retcode" if ($retcode != 200 && $retcode != 500);
 
     my %status = %{$$p_hash_ref{status}};

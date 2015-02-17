@@ -3,65 +3,16 @@
 use strict;
 use warnings;
 use List::Util qw(min max);
-use lib '/your_path_here';
+use lib '/your_directory_here/lib';
 
 use constant TZ => -5;
 
-require Ecobee;
+require Ecobee::API;
+require Ecobee::Tools;
 
 # Run in automatic, unattended mode or interact with user (default)
 our $set_auto = 0;
-our $data_directory = '/your_path_here';
-
-# Get ID of the Smart thermostat to interact with
-sub Get_Thermostat_Id {
-  my ($p_thermostat_name) = @_;
-
-  my %results;
-  my $cmd = 'thermostatSummary';
-  my %prop = (selection => {
-               selectionType => 'registered',
-               selectionMatch => ''
-              }
-             );
-
-  Ecobee::API_Get_Request($cmd, \%prop, \%results);
-
-  my @revisionList = @{$results{revisionList}};
-  my $revisionQty = @revisionList;
-
-  my $use_default = ((!defined($p_thermostat_name)) and ($revisionQty == 1));
-  my $revision;
-  foreach $revision (@revisionList) {
-    my @revisionParms = split(':', $revision);
-    return ($revisionParms[0]) if (($use_default) or ($p_thermostat_name eq $revisionParms[1]));
-  }
-
-  # Thermostat not found!
-  return (0);
-}
-
-# Get Thermostat Revision to detect if changes applied
-sub Get_Thermostat_Revision {
-  my ($p_thermostat_id, $p_scalar_ref) = @_;
-
-  my %results;
-  my $cmd = 'thermostatSummary';
-  my %prop = (selection => {
-               selectionType => 'thermostats',
-               selectionMatch => $p_thermostat_id
-              }
-             );
-
-  Ecobee::API_Get_Request($cmd, \%prop, \%results);
-
-  my @revisionList = @{$results{revisionList}};
-  my $revisionString  = $revisionList[0];
-  my @revisionParms = split(':', $revisionString);
-
-  $$p_scalar_ref = $revisionParms[3];
-  return ($revisionParms[2] eq "true");
-}
+our $data_directory = '/your_directory_here/data';
 
 # Request from ecobee servers, thermostat, environmental, sensor and runtime data
 sub Get_Thermostat_Data {
@@ -83,7 +34,7 @@ sub Get_Thermostat_Data {
                }
               );
 
-    Ecobee::API_Get_Request($cmd, \%prop, \%results);
+    API::Get_Request($cmd, \%prop, \%results);
 
     my $thermostat_ref = \@{$results{thermostatList}};
     my $settings_ref   = \%{$$thermostat_ref[0]{settings}};
@@ -108,11 +59,11 @@ sub Get_Thermostat_Data {
 
     # Runtime
     $$p_hash_ref{'connected'}         = $$runtime_ref{connected};
-    $$p_hash_ref{'actualTemperature'} = F10toC($$runtime_ref{actualTemperature});
+    $$p_hash_ref{'actualTemperature'} = Tools::F10toC($$runtime_ref{actualTemperature});
     $$p_hash_ref{'actualHumidity'}    = $$runtime_ref{actualHumidity};
 
     # Forecast
-    $$p_hash_ref{'exteriorTemperature'}      = F10toC($$forecast_ref{temperature});
+    $$p_hash_ref{'exteriorTemperature'}      = Tools::F10toC($$forecast_ref{temperature});
     $$p_hash_ref{'exteriorRelativeHumidity'} = $$forecast_ref{relativeHumidity};
   }
 
@@ -132,7 +83,7 @@ sub Get_Thermostat_Data {
                 includeSensors => 'true'
                );
 
-    Ecobee::API_Get_Request($cmd, \%prop, \%results);
+    API::Get_Request($cmd, \%prop, \%results);
 
     my $sensorList_ref = \@{$results{sensorList}};
     my $sensors_ref = \@{$$sensorList_ref[0]{sensors}};
@@ -158,7 +109,7 @@ sub Get_Thermostat_Data {
         for ($i = 0; $i < $nb_columns; $i++) {
           if ($sensor{sensorId} eq $$columns_ref[$i]) {
             my @dataParms = split(',', $$data_ref[2]);
-            $$p_hash_ref{$sensor_name} = FtoC($dataParms[$i]);
+            $$p_hash_ref{$sensor_name} = Tools::FtoC($dataParms[$i]);
           }
         }
       }
@@ -181,7 +132,7 @@ sub Get_Thermostat_Data {
                 columns => 'dehumidifier'
                );
 
-    Ecobee::API_Get_Request($cmd, \%prop, \%results);
+    API::Get_Request($cmd, \%prop, \%results);
   
     my $reportList_ref = \@{$results{reportList}};
     my $rowCount = $$reportList_ref[0]{rowCount};
@@ -233,7 +184,7 @@ sub Set_Thermostat_Data {
   else {
     # Dehumidifier ON
     $dehum_mode = 'on';
-    $dehum_level = To_Thermostat_Humidity($p_hum_level);
+    $dehum_level = Tools::To_Thermostat_Humidity($p_hum_level);
 
     if ($$p_data_ref{'dehumidifierMode'} ne $dehum_mode) {
       # Going from OFF to ON, specify both mode and level
@@ -272,12 +223,12 @@ sub Set_Thermostat_Data {
     Log_Data("Set dehumidifier [$dehum_mode, $dehum_level%], fan [$p_fan_level]");
 
     my $old_revision;
-    if (!Get_Thermostat_Revision($p_thermostat_id, \$old_revision)) {
+    if (!Tools::Get_Thermostat_Revision($p_thermostat_id, \$old_revision)) {
       Log_Data("Not connected");
       return (0);
     }
 
-    Ecobee::API_Post_Request($cmd, \%prop, \%results);
+    API::Post_Request($cmd, \%prop, \%results);
 
     # Wait for thermostat revision change. Time out after a minute
     my $new_revision;
@@ -285,7 +236,7 @@ sub Set_Thermostat_Data {
     for ($i = 0; $i < 60; $i++) {
       sleep(1);
 
-      if (!Get_Thermostat_Revision($p_thermostat_id, \$new_revision)) {
+      if (!Tools::Get_Thermostat_Revision($p_thermostat_id, \$new_revision)) {
         Log_Data("Disconnected while waiting for revision change");
         return (0);
       }
@@ -302,58 +253,6 @@ sub Set_Thermostat_Data {
     Log_Data("No update needed");
     return (1);
   }
-}
-
-# Convert Farenheit 1/10 of degrees to Celsius degrees
-sub F10toC {
-  my ($p_f10) = @_;
-  return (($p_f10 - 320) / 18.0);
-}
-
-# Convert Celsius degrees to Farenheit 1/10 of degrees
-sub CtoF10 {
-  my ($p_c) = @_;
-  return (($p_c * 18.0) + 320);
-}
-
-# Convert Farenheit degrees to Celsius degrees
-sub FtoC {
-  my ($p_f) = @_;
-  return (($p_f - 32) / 1.8);
-}
-
-# Convert Celsius degrees to Farenheit degrees
-sub CtoF {
-  my ($p_c) = @_;
-  return (($p_c * 1.8) + 32);
-}
-
-# Round to next integer
-sub round {
-  my ($p_float) = @_;
-  return (int($p_float + $p_float/abs($p_float*2)));
-}
-
-# Round to precision
-sub RoundToPrecision {
-  my ($p_float, $p_precision) = @_;
-  return ($p_precision*round($p_float/$p_precision));
-}
-
-# Convert raw humidity value to nearest even number between 30 and 80
-sub To_Thermostat_Humidity {
-  my ($p_humidity) = @_;
-  my $hum = RoundToPrecision($p_humidity, 2);
-  return (max(min($hum, 80), 30));
-}
-
-# Attempt to emulate thermostat's RH adjustment based on indoor temperature
-# Thermostat seems to add .5% humidity for each degree drop
-sub Estimate_Ecobee_Humidity {
-  my ($p_rh1, $p_t2) = @_;
-
-  my $rh2 = $p_rh1 + (21 - $p_t2)*0.5;
-  return ($rh2);
 }
 
 # Convert humidity rh1 at temperature t1 to humidity rh2 at temperature t2
@@ -382,7 +281,7 @@ sub Ideal_Indoor_Humidity {
 
   # 2 or more temp/hum pairs are needed
   my @temp_hum = ({temp => -20, hum => 30},
-                  {temp => 0, hum => 45},
+                  {temp => 0, hum => 50},
                   {temp => 20, hum => 60});
 
   my $arr_size = @temp_hum;
@@ -443,11 +342,11 @@ sub main {
   my $fan_level;
 
   $set_auto = (defined $p_parm ? ($p_parm eq "-auto") : 0);
-  Ecobee::Init($data_directory, $set_auto);
+  API::Init($data_directory, $set_auto);
   Log_Data("=========ecobee_mgr.pl Start=========");
 
   # Get thermostat ID for thermostat name (if only 1 thermostat, name not required)
-  my $thermostat_id = Get_Thermostat_Id() || die "Thermostat not defined";
+  my $thermostat_id = Tools::Get_Thermostat_Id() || die "Thermostat not defined";
 
   # Get operational and environmental information from ecobee server
   Get_Thermostat_Data($thermostat_id, \%data);
@@ -473,7 +372,7 @@ sub main {
 
       # Calculate what is the actual ideal humidity at current outdoor temperature
       my $ideal_hum_at_21 = Ideal_Indoor_Humidity($outdoor_temp);
-      my $ideal_hum = Estimate_Ecobee_Humidity($ideal_hum_at_21, $indoor_temp);
+      my $ideal_hum = Tools::Estimate_Ecobee_Humidity($ideal_hum_at_21, $indoor_temp);
 
       $log = sprintf("Out: [%d%% @ %.1fC] = [%d%% @ %.1fC] In: %d%% => %.1f%% (%.1fC)",
                      $data{exteriorRelativeHumidity}, $data{exteriorTemperature},
@@ -540,7 +439,7 @@ sub main {
     Log_Data("Thermostat not connected to server, cannot take decisions based on stale data");
   }
 
-  $log = sprintf("Number of API calls: %d", Ecobee::API_Calls());
+  $log = sprintf("Number of API calls: %d", API::API_Calls());
   Log_Data($log);
   Log_Data("----------ecobee_mgr.pl End----------");
 }
