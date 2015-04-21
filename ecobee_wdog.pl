@@ -287,7 +287,7 @@ sub Thermostat_Data_Age
   my ($p_tstat_time, $p_runtime_interval, $p_timezone_offset, $p_isdst) = @_;
 
   my ($year, $mon, $mday, $hour, $min, $sec) = ($p_tstat_time =~ /(\d+)-(\d+)-(\d+) (\d+):(\d+):(\d+)/);
-  my $rmin = (($p_runtime_interval*5) + $p_timezone_offset + ($p_isdst eq 'true' ? 60 : 0)) % (24*60);
+  my $rmin = (($p_runtime_interval*5) + $p_timezone_offset + ($p_isdst ? 60 : 0)) % (24*60);
   my $lhr = (($hour*60 + $min) - $rmin - 5)/60;
   $lhr += 24 if ($lhr < 0); # correct rollover problems
   return ($lhr);
@@ -304,7 +304,7 @@ sub Running_Thermostat_Event
   {
     my %event = %$event_href;
 
-    if (($event{running} eq 'true') and ($event{type} eq 'hold'))
+    if ($event{running} and ($event{type} eq 'hold'))
     {
       my $start = sprintf("%s %s", $event{startDate}, $event{startTime});
       my $end   = sprintf("%s %s", $event{endDate}, $event{endTime});
@@ -421,14 +421,14 @@ sub main
   Get_Thermostat_Data($thermostat_id, \%data);
 
   # Avoid making decisions on stale data
-  if ($data{connected} eq 'true')
+  if ($data{connected})
   {
     # Use actual outdoor sensor if available, otherwise from weather forecast
     my $outdoor_temp = (defined($data{sensorOutdoor}) ? $data{sensorOutdoor}
                                                       : $data{exteriorTemperature});
 
     # System is in heating mode and Smart Recovery is enabled and Aux heat can be used
-    if (($data{hvacMode} eq 'heat') and ($data{disablePreHeating} eq 'false') and
+    if (($data{hvacMode} eq 'heat') and (not $data{disablePreHeating}) and
         ($outdoor_temp < $data{auxMaxOutdoorTemp}))
     {
       # If system is not running an event

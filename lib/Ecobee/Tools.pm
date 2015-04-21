@@ -55,7 +55,7 @@ sub Get_Thermostat_Revision {
   my @revisionParms = split(':', $revisionString);
 
   $$p_scalar_ref = $revisionParms[3];
-  return ($revisionParms[2] eq "true");
+  return ($revisionParms[2]);
 }
 
 # Convert Farenheit 1/10 of degrees to Celsius degrees

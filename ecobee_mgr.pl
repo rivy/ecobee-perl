@@ -352,11 +352,11 @@ sub main {
   Get_Thermostat_Data($thermostat_id, \%data);
 
   # Avoid making decisions on stale data
-  if ($data{connected} eq "true") {
+  if ($data{connected}) {
 
     # HRV dehumidifier section
-    if (($data{hvacMode} eq "heat") and ($data{hasHrv} eq "true") and
-        ($data{hasDehumidifier} eq "true")  and ($data{dehumidifyWhenHeating} eq "true")) {
+    if (($data{hvacMode} eq "heat") and $data{hasHrv} and
+        $data{hasDehumidifier}  and $data{dehumidifyWhenHeating}) {
       # Use actual outdoor sensor if available, otherwise from weather forecast
       my $outdoor_temp = (defined($data{sensorOutdoor}) ?
                           $data{sensorOutdoor} :
